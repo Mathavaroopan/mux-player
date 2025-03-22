@@ -3,32 +3,31 @@ import React from "react";
 import { View, TouchableOpacity, StyleSheet, Text, ScrollView } from "react-native";
 
 export default function HomeScreen({ navigation }) {
-  // Use local video files instead of external HLS streams
+  // Updated to include all converted m3u8 videos
   const videoFiles = [
     {
       id: 1,
-      title: "Sample Video 1",
-      url: "file:///android_asset/video/sample1.mp4",
+      title: "1 Minute Video",
+      url: "file:///android_asset/m3u8-videos/1-min-video/output.m3u8",
       isLocal: true
     },
     {
       id: 2,
-      title: "Sample Video 2",
-      url: "file:///android_asset/video/sample2.mp4",
+      title: "40 Seconds Video",
+      url: "file:///android_asset/m3u8-videos/40secs-video/output.m3u8",
       isLocal: true
     },
     {
       id: 3,
-      title: "Default Video",
-      url: "file:///android_asset/video/output.m3u8",
+      title: "Canvas Space Video",
+      url: "file:///android_asset/m3u8-videos/canvas-space-video/output.m3u8",
       isLocal: true
     },
     {
       id: 4,
-      title: "Big Buck Bunny",
-      // This is a very reliable test video
-      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-      isLocal: false
+      title: "Google Video",
+      url: "file:///android_asset/m3u8-videos/google-video/output.m3u8",
+      isLocal: true
     }
   ];
 
@@ -53,11 +52,11 @@ export default function HomeScreen({ navigation }) {
             onPress={() => navigateToPlayer(video)}
           >
             <View style={styles.streamContent}>
-              <View style={[styles.streamIcon, {backgroundColor: video.isLocal ? "#4CAF50" : "#3f51b5"}]}>
-                <Text style={styles.streamIconText}>{video.isLocal ? "MP4" : "URL"}</Text>
+              <View style={[styles.streamIcon, {backgroundColor: "#4CAF50"}]}>
+                <Text style={styles.streamIconText}>HLS</Text>
               </View>
               <Text style={styles.streamTitle}>{video.title}</Text>
-              <Text style={styles.sourceType}>{video.isLocal ? "Local File" : "Remote URL"}</Text>
+              <Text style={styles.sourceType}>M3U8 Stream</Text>
             </View>
           </TouchableOpacity>
         ))}
@@ -126,7 +125,7 @@ const styles = StyleSheet.create({
   },
   sourceType: {
     fontSize: 12,
-    color: "#999",
+    color: "#aaa",
     textAlign: "center",
   }
 });

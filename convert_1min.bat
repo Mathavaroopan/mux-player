@@ -1,0 +1,2 @@
+@echo off
+ffmpeg -i android\app\src\main\assets\mp4-videos\1-min.mp4 -profile:v baseline -level 3.0 -start_number 0 -hls_time 10 -hls_list_size 0 -f hls -hls_segment_filename android\app\src\main\assets\m3u8-videos\1-min-video\segment_%%03d.ts android\app\src\main\assets\m3u8-videos\1-min-video\output.m3u8 

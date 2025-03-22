@@ -1,237 +1,232 @@
 // components/VideoPlayer.jsx
 
 import React, { useRef, useState, useEffect } from "react";
-import { View, StyleSheet, Dimensions, Text, ActivityIndicator, TouchableOpacity, Modal, TextInput } from "react-native";
+import { 
+  View, 
+  StyleSheet, 
+  Dimensions, 
+  Text, 
+  ActivityIndicator, 
+  TouchableOpacity, 
+  StatusBar,
+  SafeAreaView,
+  BackHandler
+} from "react-native";
 import Video from "react-native-video";
 import muxReactNativeVideo from "@mux/mux-data-react-native-video";
-import app from "../package.json"; // Adjust path if necessary
+import app from "../package.json";
 
-// Wrap the react-native-video component with Mux Data SDK functionality
+// Only use Mux analytics for remote videos
 const MuxVideo = muxReactNativeVideo(Video);
 
-// Get screen dimensions
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-export default function MuxPlayer() {
-    const originalUrl = 'file:///android_asset/video/output.m3u8';
-    const videoRef = useRef(null);
+export default function MuxPlayer({ route, navigation }) {
+  // Get video info from route params
+  const { streamUrl, streamTitle, isLocal = true } = route.params || {};
+  const videoRef = useRef(null);
+  
+  // Player state
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [videoAspect, setVideoAspect] = useState(16 / 9); // Default aspect ratio
-  const [videoHeight, setVideoHeight] = useState(0);
-  const [videoWidth, setVideoWidth] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [showSegmentAlert, setShowSegmentAlert] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [segments, setSegments] = useState([]);
-  const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
-  const [email, setEmail] = useState('');
-  const [emailError, setEmailError] = useState('');
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [videoAspect, setVideoAspect] = useState(16 / 9);
 
-  // Parse m3u8 to get segment information
+  // Handle back button
   useEffect(() => {
-    const fetchM3u8 = async () => {
-      try {
-        // For local files, we'll define pre-defined segments based on the m3u8
-        // Define segments based on the duration in the m3u8 file
-        const segmentDurations = [12.0, 15.0, 32.16, 30.16, 15.16]; // From output.m3u8
-        let cumulativeTime = 0;
-        const parsedSegments = segmentDurations.map((duration, index) => {
-          const segment = {
-            index,
-            start: cumulativeTime,
-            end: cumulativeTime + duration,
-            duration: duration,
-            name: `Segment ${index + 1}`
-          };
-          cumulativeTime += duration;
-          return segment;
-        });
-        
-        setSegments(parsedSegments);
-        console.log("Parsed segments:", parsedSegments);
-      } catch (error) {
-        console.error("Error parsing m3u8:", error);
-      }
+    const backAction = () => {
+      navigation.goBack();
+      return true;
     };
-    
-    fetchM3u8();
-  }, [originalUrl]);
 
-  const handleError = (err) => {
-    console.error("Video playback error:", err);
-    setError(`Error playing video: ${err.error?.errorString || 'Unknown error'}`);
-    setLoading(false);
-  };
+    const backHandler = BackHandler.addEventListener(
+      "hardwareBackPress",
+      backAction
+    );
 
+    return () => backHandler.remove();
+  }, [navigation]);
+
+  // Video load event handler
   const handleLoad = (data) => {
     console.log("Video loaded successfully", data);
     setLoading(false);
-    setDuration(data.duration);
+    setDuration(data.duration || 0);
     
-    // Calculate aspect ratio if we have video dimensions
+    // Calculate aspect ratio if available
     if (data.naturalSize) {
       const { width, height, orientation } = data.naturalSize;
-      
-      // Check if orientation is landscape or portrait
       const actualWidth = orientation === 'landscape' ? width : height;
       const actualHeight = orientation === 'landscape' ? height : width;
-      
-      // Set aspect ratio
-      const aspect = actualWidth / actualHeight;
+      const aspect = actualHeight > 0 ? actualWidth / actualHeight : 16/9;
       setVideoAspect(aspect);
-      
-      // Store dimensions
-      setVideoWidth(actualWidth);
-      setVideoHeight(actualHeight);
-      
-      console.log(`Video dimensions: ${actualWidth}x${actualHeight}, Aspect ratio: ${aspect}`);
     }
   };
 
-  const handleProgress = (progress) => {
-    setCurrentTime(progress.currentTime);
-    
-    // Check if we're approaching a segment boundary
-    const currentSegment = segments[currentSegmentIndex];
-    if (currentSegment && progress.currentTime >= currentSegment.end - 0.5) {
-      // We're near the end of this segment
-      if (currentSegmentIndex < segments.length - 1) {
-        // There's another segment coming up
-        if (!showSegmentAlert && !isPaused) {
-          setIsPaused(true);
-          setShowSegmentAlert(true);
-          videoRef.current.seek(currentSegment.end);
-        }
+  // Error handling
+  const handleError = (err) => {
+    console.error("Video playback error:", err);
+    if (err.error && err.error.errorString) {
+      if (err.error.errorString.includes("IndexOutOfBounds")) {
+        setError("Format error: This m3u8 stream appears to be corrupted or incompatible.");
+      } else {
+        setError(`Playback error: ${err.error.errorString}`);
       }
+    } else {
+      setError("Unknown playback error occurred");
+    }
+    setLoading(false);
+  };
+
+  // Video progress update
+  const handleProgress = (progress) => {
+    if (progress && typeof progress.currentTime === 'number') {
+      setCurrentTime(progress.currentTime);
     }
   };
 
-  const validateEmail = (email) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  };
-
-  const handleSubmitEmail = () => {
-    if (!email.trim()) {
-      setEmailError('Email is required');
-      return;
-    }
-    
-    if (!validateEmail(email)) {
-      setEmailError('Please enter a valid email address');
-      return;
-    }
-    
-    // Email is valid, proceed to next segment
-    console.log('User email:', email);
-    setEmailError('');
-    setShowSegmentAlert(false);
-    const nextSegmentIndex = currentSegmentIndex + 1;
-    if (nextSegmentIndex < segments.length) {
-      setCurrentSegmentIndex(nextSegmentIndex);
-      setIsPaused(false);
-      // Seek to the start of the next segment if needed
-      videoRef.current.seek(segments[nextSegmentIndex].start);
-      // Reset email for next time
-      setEmail('');
+  // Buffer state handler
+  const handleBuffer = (bufferInfo) => {
+    if (bufferInfo && typeof bufferInfo.isBuffering === 'boolean') {
+      setIsBuffering(bufferInfo.isBuffering);
     }
   };
 
-  // Calculate container dimensions based on aspect ratio
-  const containerWidth = screenWidth - 40; // 20px padding on each side
-  const containerHeight = Math.min(
-    containerWidth / videoAspect,  // Height based on width and aspect ratio
-    screenHeight * 0.6             // Max 60% of screen height
+  // Format time display
+  const formatTime = (seconds) => {
+    if (isNaN(seconds)) return '00:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Return to home screen
+  const goBack = () => {
+    navigation.goBack();
+  };
+
+  // Calculate player size
+  const playerHeight = Math.min(
+    screenWidth / videoAspect,
+    screenHeight * 0.6
   );
 
+  // Choose the appropriate Video component based on whether the source is local or remote
+  const VideoComponent = isLocal ? Video : MuxVideo;
+
   return (
-    <View style={[styles.container, { height: containerHeight }]}>
-      {error ? (
-        <Text style={styles.errorText}>{error}</Text>
-      ) : (
-        <>
-          <MuxVideo
-            ref={videoRef}
-            source={{ uri: originalUrl }}
-            style={styles.video}
-            controls={true}
-            resizeMode="contain"
-            paused={isPaused}
-            onError={handleError}
-            onLoad={handleLoad}
-            onProgress={handleProgress}
-            // Add Mux Data monitoring options
-            muxOptions={{
-              application_name: app.name,          // Required: Your application name
-              application_version: app.version,    // Recommended: Your application version
-              data: {
-                env_key: 'YOUR_ENVIRONMENT_KEY',   // Required: Replace with your actual environment key
-                player_software_version: '5.0.2',    // Recommended: Version of react-native-video
-                player_name: 'React Native Player',  // Player name (refer to Mux metadata docs for more fields)
-                video_id: 'My Video Id',
-                video_title: 'My awesome video',
-              },
-            }}
-          />
-          {loading && (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#FFFFFF" />
-              <Text style={styles.loadingText}>Loading video...</Text>
-            </View>
-          )}
-          
-          {/* Email Form Modal */}
-          <Modal
-            animationType="fade"
-            transparent={true}
-            visible={showSegmentAlert}
-            onRequestClose={() => setShowSegmentAlert(false)}
-          >
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContent}>
-                <Text style={styles.modalTitle}>Segment Completed</Text>
-                {currentSegmentIndex < segments.length - 1 && (
-                  <Text style={styles.modalText}>
-                    You have completed {segments[currentSegmentIndex]?.name}.
-                    Please enter your email to continue to {segments[currentSegmentIndex + 1]?.name}.
-                  </Text>
-                )}
-                
-                <TextInput
-                  style={styles.emailInput}
-                  placeholder="Enter your email"
-                  placeholderTextColor="#999"
-                  value={email}
-                  onChangeText={setEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
-                
-                {emailError ? <Text style={styles.errorMessage}>{emailError}</Text> : null}
-                
-                <TouchableOpacity 
-                  style={styles.proceedButton}
-                  onPress={handleSubmitEmail}
-                >
-                  <Text style={styles.proceedButtonText}>Submit</Text>
-                </TouchableOpacity>
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="light-content" backgroundColor="#000" />
+      
+      <View style={styles.header}>
+        <TouchableOpacity onPress={goBack} style={styles.backButton}>
+          <Text style={styles.backButtonText}>←</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{streamTitle || "Video Player"}</Text>
+        <View style={styles.spacer} />
+      </View>
+      
+      <View style={[styles.playerContainer, { height: playerHeight }]}>
+        {error ? (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={goBack}>
+              <Text style={styles.buttonText}>Go Back</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            <VideoComponent
+              ref={videoRef}
+              source={{ uri: streamUrl }}
+              style={styles.video}
+              resizeMode="contain"
+              controls={true}
+              paused={isPaused}
+              onError={handleError}
+              onLoad={handleLoad}
+              onProgress={handleProgress}
+              onBuffer={handleBuffer}
+              playInBackground={false}
+              repeat={false}
+              ignoreSilentSwitch="ignore"
+              useTextureView={true}
+              // For mux analytics (only for non-local videos)
+              {...(!isLocal && {
+                muxOptions: {
+                  application_name: app.name,
+                  application_version: app.version,
+                  data: {
+                    env_key: 'YOUR_ENVIRONMENT_KEY',
+                    player_name: 'React Native Player',
+                    video_id: streamTitle || 'Unknown',
+                    video_title: streamTitle || 'Unknown',
+                  },
+                }
+              })}
+            />
+            
+            {(loading || isBuffering) && (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#4CAF50" />
+                <Text style={styles.loadingText}>
+                  {isBuffering ? "Buffering..." : "Loading video..."}
+                </Text>
               </View>
-            </View>
-          </Modal>
-        </>
-      )}
-    </View>
+            )}
+          </>
+        )}
+      </View>
+
+      <View style={styles.controlsContainer}>
+        <Text style={styles.titleText}>{streamTitle}</Text>
+        <Text style={styles.timeText}>{formatTime(currentTime)} / {formatTime(duration)}</Text>
+        
+        <View style={styles.sourceInfo}>
+          <Text style={styles.sourceText}>
+            {isLocal ? "Local M3U8 Stream" : "Remote Stream"}
+          </Text>
+        </View>
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    width: screenWidth - 40, // Full width minus padding
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#1e1e1e",
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "#2c2c2c",
+  },
+  backButton: {
+    padding: 8,
+  },
+  backButtonText: {
+    fontSize: 24,
+    color: "#fff",
+    fontWeight: "bold",
+  },
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 18,
+    color: "#fff",
+    fontWeight: "bold",
+  },
+  spacer: {
+    width: 40,
+  },
+  playerContainer: {
+    width: screenWidth,
     backgroundColor: "#000",
-    borderRadius: 8,
-    overflow: 'hidden',
     justifyContent: "center",
     alignItems: "center",
   },
@@ -239,11 +234,26 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
   },
+  errorContainer: {
+    padding: 20,
+    alignItems: "center",
+  },
   errorText: {
-    color: "white",
+    color: "#f44336",
     fontSize: 16,
     textAlign: "center",
-    padding: 20,
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: "#4CAF50",
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 25,
+  },
+  buttonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "bold",
   },
   loadingContainer: {
     position: "absolute",
@@ -258,60 +268,27 @@ const styles = StyleSheet.create({
   loadingText: {
     color: "white",
     fontSize: 18,
-    marginTop: 10,
+    marginTop: 16,
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
+  controlsContainer: {
+    padding: 16,
   },
-  modalContent: {
-    backgroundColor: 'white',
-    borderRadius: 10,
-    padding: 20,
-    width: '80%',
-    maxWidth: 400,
-    alignItems: 'center',
+  titleText: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#fff",
+    marginBottom: 8,
   },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    color: '#333',
-  },
-  modalText: {
-    fontSize: 16,
-    marginBottom: 20,
-    textAlign: 'center',
-    color: '#666',
-  },
-  emailInput: {
-    width: '100%',
-    height: 50,
-    borderColor: '#ddd',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    fontSize: 16,
-    color: '#333',
-    marginBottom: 15,
-  },
-  errorMessage: {
-    color: 'red',
+  timeText: {
+    color: "#aaa",
     fontSize: 14,
-    marginBottom: 15,
-    alignSelf: 'flex-start',
+    marginBottom: 8,
   },
-  proceedButton: {
-    backgroundColor: '#2196F3',
-    paddingVertical: 12,
-    paddingHorizontal: 30,
-    borderRadius: 25,
+  sourceInfo: {
+    marginTop: 8,
   },
-  proceedButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
+  sourceText: {
+    color: "#4CAF50",
+    fontSize: 14,
   }
 });
