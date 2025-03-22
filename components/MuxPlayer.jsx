@@ -10,7 +10,10 @@ import {
   TouchableOpacity, 
   StatusBar,
   SafeAreaView,
-  BackHandler
+  BackHandler,
+  Modal,
+  TextInput,
+  Alert
 } from "react-native";
 import Video from "react-native-video";
 import muxReactNativeVideo from "@mux/mux-data-react-native-video";
@@ -34,6 +37,14 @@ export default function MuxPlayer({ route, navigation }) {
   const [duration, setDuration] = useState(0);
   const [isBuffering, setIsBuffering] = useState(false);
   const [videoAspect, setVideoAspect] = useState(16 / 9);
+  
+  // Segment handling
+  const [segments, setSegments] = useState([]);
+  const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
+  const [showSegmentModal, setShowSegmentModal] = useState(false);
+  const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const [lastProcessedTime, setLastProcessedTime] = useState(0);
 
   // Handle back button
   useEffect(() => {
@@ -49,6 +60,36 @@ export default function MuxPlayer({ route, navigation }) {
 
     return () => backHandler.remove();
   }, [navigation]);
+
+  // Initialize segments based on HLS file (simulated because we can't read the m3u8 file directly)
+  useEffect(() => {
+    // For demonstration, we'll create segment boundaries based on video duration
+    // In a real implementation, you would parse the .m3u8 file to get actual segments
+    const initializeSegments = () => {
+      if (duration > 0) {
+        // Create segments based on approximately 10 second intervals
+        const segmentCount = Math.ceil(duration / 10);
+        const segmentList = [];
+        
+        for (let i = 0; i < segmentCount; i++) {
+          const start = i * 10;
+          const end = Math.min((i + 1) * 10, duration);
+          
+          segmentList.push({
+            index: i,
+            start: start,
+            end: end,
+            name: `Segment ${i + 1}`
+          });
+        }
+        
+        setSegments(segmentList);
+        console.log("Initialized segments:", segmentList);
+      }
+    };
+    
+    initializeSegments();
+  }, [duration]);
 
   // Video load event handler
   const handleLoad = (data) => {
@@ -85,6 +126,31 @@ export default function MuxPlayer({ route, navigation }) {
   const handleProgress = (progress) => {
     if (progress && typeof progress.currentTime === 'number') {
       setCurrentTime(progress.currentTime);
+      
+      // Check if we're crossing a segment boundary
+      if (segments.length > 0 && Math.abs(progress.currentTime - lastProcessedTime) > 0.5) {
+        // Find the current segment
+        const currentSegment = segments.find(segment => 
+          progress.currentTime >= segment.start && progress.currentTime < segment.end
+        );
+        
+        if (currentSegment && currentSegment.index !== currentSegmentIndex) {
+          console.log(`Transitioning from segment ${currentSegmentIndex} to ${currentSegment.index}`);
+          
+          // We're crossing a segment boundary
+          if (currentSegment.index > currentSegmentIndex) {
+            setIsPaused(true);
+            setShowSegmentModal(true);
+            // Save where we are for resuming
+            setLastProcessedTime(progress.currentTime);
+            setCurrentSegmentIndex(currentSegment.index);
+          } else {
+            // Going backwards, just update the segment index
+            setCurrentSegmentIndex(currentSegment.index);
+            setLastProcessedTime(progress.currentTime);
+          }
+        }
+      }
     }
   };
 
@@ -93,6 +159,33 @@ export default function MuxPlayer({ route, navigation }) {
     if (bufferInfo && typeof bufferInfo.isBuffering === 'boolean') {
       setIsBuffering(bufferInfo.isBuffering);
     }
+  };
+
+  // Email validation
+  const validateEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  // Handle email form submission
+  const handleEmailSubmit = () => {
+    if (!email.trim()) {
+      setEmailError('Email is required');
+      return;
+    }
+    
+    if (!validateEmail(email)) {
+      setEmailError('Please enter a valid email address');
+      return;
+    }
+    
+    // Email is valid, continue playback
+    console.log(`Email submitted: ${email} at segment ${currentSegmentIndex}`);
+    setEmailError('');
+    setShowSegmentModal(false);
+    setIsPaused(false);
+    
+    // You could save the email to a database or API here
   };
 
   // Format time display
@@ -181,6 +274,47 @@ export default function MuxPlayer({ route, navigation }) {
         )}
       </View>
 
+      {/* Email Modal when segment changes */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={showSegmentModal}
+        onRequestClose={() => {
+          // Don't allow dismissing the modal without email
+          console.log("Modal close attempted");
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Continue to Next Segment</Text>
+            <Text style={styles.modalText}>
+              Please enter your email address to continue watching the video.
+            </Text>
+            
+            <TextInput
+              style={styles.emailInput}
+              placeholder="Enter your email"
+              placeholderTextColor="#999"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+            
+            {emailError ? (
+              <Text style={styles.errorMessage}>{emailError}</Text>
+            ) : null}
+            
+            <TouchableOpacity 
+              style={styles.submitButton}
+              onPress={handleEmailSubmit}
+            >
+              <Text style={styles.submitButtonText}>Continue</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <View style={styles.controlsContainer}>
         <Text style={styles.titleText}>{streamTitle}</Text>
         <Text style={styles.timeText}>{formatTime(currentTime)} / {formatTime(duration)}</Text>
@@ -188,6 +322,9 @@ export default function MuxPlayer({ route, navigation }) {
         <View style={styles.sourceInfo}>
           <Text style={styles.sourceText}>
             {isLocal ? "Local M3U8 Stream" : "Remote Stream"}
+          </Text>
+          <Text style={styles.segmentText}>
+            {segments.length > 0 ? `Segment ${currentSegmentIndex + 1} of ${segments.length}` : ""}
           </Text>
         </View>
       </View>
@@ -290,5 +427,65 @@ const styles = StyleSheet.create({
   sourceText: {
     color: "#4CAF50",
     fontSize: 14,
-  }
+  },
+  segmentText: {
+    color: "#4CAF50",
+    fontSize: 14,
+    marginTop: 4,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    backgroundColor: "white",
+    borderRadius: 12,
+    padding: 24,
+    width: "80%",
+    alignItems: "center",
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 12,
+    color: "#333",
+    textAlign: "center",
+  },
+  modalText: {
+    fontSize: 16,
+    marginBottom: 20,
+    textAlign: "center",
+    color: "#666",
+  },
+  emailInput: {
+    width: "100%",
+    height: 48,
+    borderColor: "#ddd",
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    color: "#333",
+    marginBottom: 12,
+  },
+  errorMessage: {
+    color: "#f44336",
+    fontSize: 14,
+    marginBottom: 12,
+    alignSelf: "flex-start",
+  },
+  submitButton: {
+    backgroundColor: "#4CAF50",
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 24,
+    marginTop: 8,
+  },
+  submitButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
 });
