@@ -1,7 +1,7 @@
 // components/VideoPlayer.jsx
 
 import React, { useRef, useState, useEffect } from "react";
-import { View, StyleSheet, Dimensions, Text, ActivityIndicator, TouchableOpacity, Modal } from "react-native";
+import { View, StyleSheet, Dimensions, Text, ActivityIndicator, TouchableOpacity, Modal, TextInput } from "react-native";
 import Video from "react-native-video";
 import muxReactNativeVideo from "@mux/mux-data-react-native-video";
 import app from "../package.json"; // Adjust path if necessary
@@ -26,6 +26,8 @@ export default function MuxPlayer() {
   const [isPaused, setIsPaused] = useState(false);
   const [segments, setSegments] = useState([]);
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
+  const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
 
   // Parse m3u8 to get segment information
   useEffect(() => {
@@ -106,7 +108,25 @@ export default function MuxPlayer() {
     }
   };
 
-  const handleProceed = () => {
+  const validateEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const handleSubmitEmail = () => {
+    if (!email.trim()) {
+      setEmailError('Email is required');
+      return;
+    }
+    
+    if (!validateEmail(email)) {
+      setEmailError('Please enter a valid email address');
+      return;
+    }
+    
+    // Email is valid, proceed to next segment
+    console.log('User email:', email);
+    setEmailError('');
     setShowSegmentAlert(false);
     const nextSegmentIndex = currentSegmentIndex + 1;
     if (nextSegmentIndex < segments.length) {
@@ -114,6 +134,8 @@ export default function MuxPlayer() {
       setIsPaused(false);
       // Seek to the start of the next segment if needed
       videoRef.current.seek(segments[nextSegmentIndex].start);
+      // Reset email for next time
+      setEmail('');
     }
   };
 
@@ -160,7 +182,7 @@ export default function MuxPlayer() {
             </View>
           )}
           
-          {/* Segment Transition Alert Modal */}
+          {/* Email Form Modal */}
           <Modal
             animationType="fade"
             transparent={true}
@@ -173,14 +195,27 @@ export default function MuxPlayer() {
                 {currentSegmentIndex < segments.length - 1 && (
                   <Text style={styles.modalText}>
                     You have completed {segments[currentSegmentIndex]?.name}.
-                    Would you like to proceed to {segments[currentSegmentIndex + 1]?.name}?
+                    Please enter your email to continue to {segments[currentSegmentIndex + 1]?.name}.
                   </Text>
                 )}
+                
+                <TextInput
+                  style={styles.emailInput}
+                  placeholder="Enter your email"
+                  placeholderTextColor="#999"
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+                
+                {emailError ? <Text style={styles.errorMessage}>{emailError}</Text> : null}
+                
                 <TouchableOpacity 
                   style={styles.proceedButton}
-                  onPress={handleProceed}
+                  onPress={handleSubmitEmail}
                 >
-                  <Text style={styles.proceedButtonText}>Proceed</Text>
+                  <Text style={styles.proceedButtonText}>Submit</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -250,6 +285,23 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     textAlign: 'center',
     color: '#666',
+  },
+  emailInput: {
+    width: '100%',
+    height: 50,
+    borderColor: '#ddd',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 16,
+    color: '#333',
+    marginBottom: 15,
+  },
+  errorMessage: {
+    color: 'red',
+    fontSize: 14,
+    marginBottom: 15,
+    alignSelf: 'flex-start',
   },
   proceedButton: {
     backgroundColor: '#2196F3',

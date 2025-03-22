@@ -13,13 +13,6 @@ export default function HomeScreen({ navigation }) {
           color="#4285F4"
         />
       </View>
-      <View style={styles.buttonContainer}>
-        <Button
-          title="Go to Bradmax Player"
-          onPress={() => navigation.navigate("BradmaxPlayer")}
-          color="#DB4437"
-        />
-      </View>
     </View>
   );
 }
