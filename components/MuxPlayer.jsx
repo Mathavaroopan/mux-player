@@ -45,6 +45,7 @@ export default function MuxPlayer({ route, navigation }) {
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
   const [lastProcessedTime, setLastProcessedTime] = useState(0);
+  const [completedSegments, setCompletedSegments] = useState([]);
 
   // Handle back button
   useEffect(() => {
@@ -127,29 +128,94 @@ export default function MuxPlayer({ route, navigation }) {
     if (progress && typeof progress.currentTime === 'number') {
       setCurrentTime(progress.currentTime);
       
+      // No segment handling if modal is already showing
+      if (showSegmentModal) {
+        return;
+      }
+      
       // Check if we're crossing a segment boundary
-      if (segments.length > 0 && Math.abs(progress.currentTime - lastProcessedTime) > 0.5) {
+      if (segments.length > 0) {
         // Find the current segment
         const currentSegment = segments.find(segment => 
           progress.currentTime >= segment.start && progress.currentTime < segment.end
         );
         
-        if (currentSegment && currentSegment.index !== currentSegmentIndex) {
-          console.log(`Transitioning from segment ${currentSegmentIndex} to ${currentSegment.index}`);
-          
-          // We're crossing a segment boundary
-          if (currentSegment.index > currentSegmentIndex) {
-            setIsPaused(true);
-            setShowSegmentModal(true);
-            // Save where we are for resuming
-            setLastProcessedTime(progress.currentTime);
-            setCurrentSegmentIndex(currentSegment.index);
-          } else {
-            // Going backwards, just update the segment index
-            setCurrentSegmentIndex(currentSegment.index);
-            setLastProcessedTime(progress.currentTime);
+        if (currentSegment) {
+          // If we've moved to a new segment, check if it's forward movement
+          if (currentSegment.index !== currentSegmentIndex) {
+            console.log(`Transitioning from segment ${currentSegmentIndex} to ${currentSegment.index}`);
+            
+            // We're crossing a segment boundary
+            if (currentSegment.index > currentSegmentIndex) {
+              // Only show form lock before the 2nd segment (index 1)
+              if (currentSegment.index === 1 && !completedSegments.includes(0)) {
+                // Moving to 2nd segment - enforce email collection
+                setIsPaused(true);
+                setShowSegmentModal(true);
+                // Save where we are for resuming
+                setLastProcessedTime(progress.currentTime);
+                setCurrentSegmentIndex(currentSegment.index);
+                
+                // Force seeking back to the end of previous segment if needed
+                if (videoRef.current) {
+                  const previousSegmentEnd = segments[currentSegmentIndex].end;
+                  videoRef.current.seek(previousSegmentEnd - 0.1);
+                }
+              } else {
+                // For all other segments, just update state and continue
+                setCurrentSegmentIndex(currentSegment.index);
+                setLastProcessedTime(progress.currentTime);
+              }
+            } else {
+              // Moving backwards, just update the segment index
+              setCurrentSegmentIndex(currentSegment.index);
+              setLastProcessedTime(progress.currentTime);
+            }
           }
         }
+      }
+    }
+  };
+
+  // Handle seek events
+  const handleSeek = (data) => {
+    console.log("Seek event triggered", data);
+    const seekTime = data.seekTime || 0;
+    
+    // Find which segment this time falls into
+    if (segments.length > 0 && !showSegmentModal) {
+      const targetSegment = segments.find(segment => 
+        seekTime >= segment.start && seekTime < segment.end
+      );
+      
+      // If seeking forward beyond first segment, handle specially
+      if (targetSegment && targetSegment.index > currentSegmentIndex) {
+        console.log(`Attempting to seek to segment ${targetSegment.index} from ${currentSegmentIndex}`);
+        
+        // Only block seeking to segment 1 (2nd segment) if it hasn't been unlocked
+        if (targetSegment.index === 1 && !completedSegments.includes(0)) {
+          console.log("Blocked seeking forward to locked 2nd segment");
+          
+          // Seeking to the locked 2nd segment, go back to first segment
+          if (videoRef.current) {
+            const currentSegment = segments[currentSegmentIndex];
+            const safeSeekTime = (currentSegment.start + currentSegment.end) / 2;
+            
+            // We need to defer this seek slightly to avoid conflict
+            setTimeout(() => {
+              videoRef.current.seek(safeSeekTime);
+              setLastProcessedTime(safeSeekTime);
+            }, 50);
+          }
+        } else {
+          // This seek is allowed (not to the locked 2nd segment)
+          setCurrentSegmentIndex(targetSegment.index);
+          setLastProcessedTime(seekTime);
+        }
+      } else if (targetSegment) {
+        // Seeking backward or within current segment is always allowed
+        setCurrentSegmentIndex(targetSegment.index);
+        setLastProcessedTime(seekTime);
       }
     }
   };
@@ -181,11 +247,48 @@ export default function MuxPlayer({ route, navigation }) {
     
     // Email is valid, continue playback
     console.log(`Email submitted: ${email} at segment ${currentSegmentIndex}`);
+    
+    // Mark previous segment as completed
+    setCompletedSegments(prev => [...prev, currentSegmentIndex - 1]);
+    
     setEmailError('');
+    setEmail(''); // Reset email field for next time
     setShowSegmentModal(false);
     setIsPaused(false);
     
     // You could save the email to a database or API here
+  };
+
+  // Handle cancel button in email form
+  const handleCancel = () => {
+    // Since we only lock at segment 1, and cancel should skip to segment 2
+    if (segments.length > 2) {
+      console.log(`Cancelling form, skipping to segment 2`);
+      
+      // Reset form state
+      setEmail('');
+      setEmailError('');
+      setShowSegmentModal(false);
+      
+      // Skip to segment 2 (3rd segment)
+      setCurrentSegmentIndex(2);
+      
+      // Seek to the start of segment 2
+      if (videoRef.current && segments[2]) {
+        const skipToTime = segments[2].start;
+        videoRef.current.seek(skipToTime);
+        setLastProcessedTime(skipToTime);
+      }
+      
+      // Resume playback
+      setIsPaused(false);
+    } else {
+      // Not enough segments, just close modal and resume
+      setEmail('');
+      setEmailError('');
+      setShowSegmentModal(false);
+      setIsPaused(false);
+    }
   };
 
   // Format time display
@@ -242,6 +345,7 @@ export default function MuxPlayer({ route, navigation }) {
               onError={handleError}
               onLoad={handleLoad}
               onProgress={handleProgress}
+              onSeek={handleSeek}
               onBuffer={handleBuffer}
               playInBackground={false}
               repeat={false}
@@ -280,15 +384,16 @@ export default function MuxPlayer({ route, navigation }) {
         transparent={true}
         visible={showSegmentModal}
         onRequestClose={() => {
-          // Don't allow dismissing the modal without email
+          // Don't allow dismissing the modal without explicit action
           console.log("Modal close attempted");
         }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Continue to Next Segment</Text>
+            <Text style={styles.modalTitle}>Access Second Segment</Text>
             <Text style={styles.modalText}>
-              Please enter your email address to continue watching the video.
+              To watch the second segment of this video, please enter your email address.
+              Or press Cancel to skip to the third segment.
             </Text>
             
             <TextInput
@@ -305,12 +410,21 @@ export default function MuxPlayer({ route, navigation }) {
               <Text style={styles.errorMessage}>{emailError}</Text>
             ) : null}
             
-            <TouchableOpacity 
-              style={styles.submitButton}
-              onPress={handleEmailSubmit}
-            >
-              <Text style={styles.submitButtonText}>Continue</Text>
-            </TouchableOpacity>
+            <View style={styles.buttonRow}>
+              <TouchableOpacity 
+                style={styles.cancelButton}
+                onPress={handleCancel}
+              >
+                <Text style={styles.cancelButtonText}>Skip Segment</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.submitButton}
+                onPress={handleEmailSubmit}
+              >
+                <Text style={styles.submitButtonText}>Continue</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -476,12 +590,32 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     alignSelf: "flex-start",
   },
+  buttonRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: "100%",
+    marginTop: 16,
+  },
+  cancelButton: {
+    backgroundColor: "#f44336",
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 24,
+    minWidth: "45%",
+    alignItems: "center",
+  },
+  cancelButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
   submitButton: {
     backgroundColor: "#4CAF50",
     paddingVertical: 12,
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
     borderRadius: 24,
-    marginTop: 8,
+    minWidth: "45%",
+    alignItems: "center",
   },
   submitButtonText: {
     color: "white",
